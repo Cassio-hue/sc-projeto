@@ -5,6 +5,7 @@
 # blog implements aes https://medium.com/wearesinch/building-aes-128-from-the-ground-up-with-python-8122af44ebf9
 
 from constants import aes_sbox, reverse_aes_sbox
+global PAD_MESSAGE
 
 # Divide o conteudo em matriz 4x4 blocos de 16 bytes
 # content: conteudo a ser dividido
@@ -18,6 +19,7 @@ def break_in_grids_of_16(content):
             for j in range(4):
                 grid[i].append(b[i + j * 4])
         result.append(grid)
+
     return result
 
 
@@ -27,6 +29,7 @@ def break_in_grids_of_16(content):
 def lookup(byte):
     x = byte >> 4
     y = byte & 15
+
     return aes_sbox[x][y]
 
 
@@ -36,6 +39,7 @@ def lookup(byte):
 def reverse_lookup(byte):
     x = byte >> 4
     y = byte & 15
+
     return reverse_aes_sbox[x][y]
 
 
@@ -63,15 +67,14 @@ def expand_key(key, rounds):
 
     key_grid = break_in_grids_of_16(key)[0]
 
-
     for round in range(rounds):
         last_column = [row[-1] for row in key_grid]
-        last_column_rotate_step = rotate_row_left(last_column)
-        last_column_sbox_step = [lookup(b) for b in last_column_rotate_step]
-        last_column_rcon_step = [last_column_sbox_step[i] ^ rcon[round][i] for i in range(len(last_column_rotate_step))]
+        last_column_rotate = rotate_row_left(last_column)
+        last_column_sbox = [lookup(b) for b in last_column_rotate]
+        last_column_rcon = [last_column_sbox[i] ^ rcon[round][i] for i in range(len(last_column_rotate))]
 
         for r in range(4):
-            key_grid[r] += bytes([last_column_rcon_step[r] ^ key_grid[r][round*4]])
+            key_grid[r] += bytes([last_column_rcon[r] ^ key_grid[r][round*4]])
 
         for i in range(len(key_grid)):
             for j in range(1, 4):
@@ -88,6 +91,7 @@ def multiply_by_2(byte):
     result &= 0xff
     if (byte & 128) != 0:
         result = result ^ 0x1b
+
     return result
 
 
@@ -108,6 +112,7 @@ def mix_columns(grid):
         col = mix_column(col)
         for i in range(4):
             new_grid[i].append(col[i])
+
     return new_grid
 
 
@@ -130,10 +135,12 @@ def mix_column(column):
 # return: bloco de 16 bytes
 def add_sub_key(block_grid, key_grid):
     result = []
+
     for i in range(4):
         result.append([])
         for j in range(4):
             result[-1].append(block_grid[i][j] ^ key_grid[i][j])
+
     return result
 
 
@@ -144,9 +151,11 @@ def add_sub_key(block_grid, key_grid):
 # return: lista de 4 bytes
 def extract_key_for_round(expanded_key, round):
     result = []
+
     for row in expanded_key:
         temp = row[round*4: round*4 + 4]
         result.append(temp)
+
     return result
 
 
@@ -155,10 +164,11 @@ def extract_key_for_round(expanded_key, round):
 # plaintext: dados a serem cifrados
 # return: texto cifrado
 def aes_encrypt(key, plaintext):
-    pad = bytes(16 - len(plaintext) % 16)
+    global PAD_MESSAGE
+    PAD_MESSAGE = bytes(16 - len(plaintext) % 16)
 
-    if len(pad) != 16:
-        plaintext += pad
+    if len(PAD_MESSAGE) != 16:
+        plaintext += PAD_MESSAGE
 
     grids = break_in_grids_of_16(plaintext)
 
@@ -176,13 +186,12 @@ def aes_encrypt(key, plaintext):
         temp_grids = []
 
         for grid in grids:
-            sub_bytes_step = [[lookup(val) for val in row] for row in grid]
-            shift_rows_step = [rotate_row_left(
-                sub_bytes_step[i], i) for i in range(4)]
-            mix_column_step = mix_columns(shift_rows_step)
+            sub_bytes = [[lookup(val) for val in row] for row in grid]
+            shift_rows = [rotate_row_left(sub_bytes[i], i) for i in range(4)]
+            mix_column = mix_columns(shift_rows)
             round_key = extract_key_for_round(expanded_key, round)
-            add_sub_key_step = add_sub_key(mix_column_step, round_key)
-            temp_grids.append(add_sub_key_step)
+            sub_key = add_sub_key(mix_column, round_key)
+            temp_grids.append(sub_key)
 
         grids = temp_grids
 
@@ -190,11 +199,10 @@ def aes_encrypt(key, plaintext):
     round_key = extract_key_for_round(expanded_key, 10)
 
     for grid in grids:
-        sub_bytes_step = [[lookup(val) for val in row] for row in grid]
-        shift_rows_step = [rotate_row_left(
-            sub_bytes_step[i], i) for i in range(4)]
-        add_sub_key_step = add_sub_key(shift_rows_step, round_key)
-        temp_grids.append(add_sub_key_step)
+        sub_bytes = [[lookup(val) for val in row] for row in grid]
+        shift_rows = [rotate_row_left(sub_bytes[i], i) for i in range(4)]
+        sub_key = add_sub_key(shift_rows, round_key)
+        temp_grids.append(sub_key)
 
     grids = temp_grids
 
@@ -223,12 +231,12 @@ def aes_decrypt(key, cipher):
 
     for grid in grids:
 
-        add_sub_key_step = add_sub_key(grid, round_key)
-        shift_rows_step = [rotate_row_left(
-            add_sub_key_step[i], -1 * i) for i in range(4)]
-        sub_bytes_step = [[reverse_lookup(val) for val in row]
-                          for row in shift_rows_step]
-        temp_grids.append(sub_bytes_step)
+        sub_key = add_sub_key(grid, round_key)
+        shift_rows = [rotate_row_left(
+            sub_key[i], -1 * i) for i in range(4)]
+        sub_bytes = [[reverse_lookup(val) for val in row]
+                          for row in shift_rows]
+        temp_grids.append(sub_bytes)
 
     grids = temp_grids
 
@@ -237,15 +245,14 @@ def aes_decrypt(key, cipher):
 
         for grid in grids:
             round_key = extract_key_for_round(expanded_key, round)
-            add_sub_key_step = add_sub_key(grid, round_key)
+            sub_key = add_sub_key(grid, round_key)
 
-            # Doing the mix columns three times is equal to using the reverse matrix
-            mix_column_step = mix_columns(add_sub_key_step)
-            mix_column_step = mix_columns(mix_column_step)
-            mix_column_step = mix_columns(mix_column_step)
-            shift_rows_step = [rotate_row_left(mix_column_step[i], -1 * i) for i in range(4)]
-            sub_bytes_step  = [[reverse_lookup(val) for val in row] for row in shift_rows_step]
-            temp_grids.append(sub_bytes_step)
+            mix_column = mix_columns(sub_key)
+            mix_column = mix_columns(mix_column)
+            mix_column = mix_columns(mix_column)
+            shift_rows = [rotate_row_left(mix_column[i], -1 * i) for i in range(4)]
+            sub_bytes  = [[reverse_lookup(val) for val in row] for row in shift_rows]
+            temp_grids.append(sub_bytes)
 
         grids = temp_grids
         temp_grids = []
@@ -257,7 +264,16 @@ def aes_decrypt(key, cipher):
 
     grids = temp_grids
 
-    return bytes([grid[row][column] for grid in grids for column in range(4) for row in range(4)])
+    decrypted_list = []
+
+    for grid in temp_grids:
+        for column in range(4):
+            for row in range(4):
+                decrypted_list.append(grid[row][column])
+
+    decrypted_bytes = bytes(decrypted_list)[:-len(PAD_MESSAGE)]
+
+    return decrypted_bytes
 
 
 # Função serve para incrementar o contador de acordo com o padrão AES-CTR
@@ -271,13 +287,14 @@ def increment_counter(counter):
         if counter[i] <= 255:
             break
         counter[i] = 0
+
     return bytes(counter)
 
 
 # Realiza o XOR em duas listas de bytes
 # a: lista de bytes
 # b: lista de bytes
-# return: resultado a ^ b
+# return: resultado a XOR b
 def xor_bytes(a, b):
     return bytes([i ^ j for i, j in zip(a, b)])
 
@@ -309,27 +326,43 @@ def aes_ctr_encrypt_decrypt(plaintext, key, nonce):
 
 enc_key = '1111111111111111'.encode()
 
-message = 'Olá teste, olha só como vamos cifrar e decifrar esta mensagem!'
-print("Mensagem Original:   ", message)
-
-encrypted_message = aes_encrypt(enc_key, message.encode())
-print("Mensagem Encriptada: ", encrypted_message)
-
-decrypted_message_str = aes_decrypt(enc_key, encrypted_message).decode()
-print("Mensagem Decriptada: ", decrypted_message_str)
-
 print()
 print()
+message_aes = 'Olá mundo! Essa mensagem será cifrada e decifrada com o algoritmo AES'
+print("AES - Mensagem Original:", message_aes)
 print()
 
-key = "your16bytekeyhere".encode()
-nonce = "unique_nonce_here"
+encrypted_message_aes = aes_encrypt(enc_key, message_aes.encode())
+print("AES - Mensagem Cifrada:", encrypted_message_aes)
+print()
 
-plaintext = "your 123 plaintext message here 123 outra coisa"
-print("Plaintext:", plaintext)
+decrypted_message_aes = aes_decrypt(enc_key, encrypted_message_aes).decode()
+print("AES - Mensagem Decifrada:", decrypted_message_aes)
+print()
+print("Mensagem Original == Mensagem Decifrada:", message_aes == decrypted_message_aes)
 
-ciphertext = aes_ctr_encrypt_decrypt(plaintext.encode(), key, nonce)
-print("Ciphertext:", ciphertext)
+print()
+print('= '*30, end='')
+print('DIVISÃO ENTRE OS RESULTADOS', end='')
+print(' ='*30)
+print()
 
-decrypted = aes_ctr_encrypt_decrypt(ciphertext, key, nonce).decode()
-print("Decrypted:", decrypted)
+key = "chaveDe16BytesVemAqui".encode()
+nonce = "valor_uinico"
+
+message_aes_ctr = "Olá mundo! Essa mensagem será cifrada e decifrada com o algoritmo AES no modo CTR"
+print("AES CTR - Mensagem Original:", message_aes_ctr)
+print()
+
+encrypted_message_aes_ctr = aes_ctr_encrypt_decrypt(message_aes_ctr.encode(), key, nonce)
+print("AES CTR - Mensagem Cifrada:", encrypted_message_aes_ctr)
+print()
+
+decrypted_message_aes_ctr = aes_ctr_encrypt_decrypt(encrypted_message_aes_ctr, key, nonce).decode()
+print("AES CTR - Mensagem Decifrada:", decrypted_message_aes_ctr)
+print()
+print(message_aes_ctr)
+print(decrypted_message_aes_ctr)
+print("Mensagem Original == Mensagem Decifrada: ", message_aes_ctr == decrypted_message_aes_ctr)
+print()
+print()
